@@ -11,16 +11,18 @@ import json
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="EduFinance Premium", layout="wide", page_icon="🏦")
 
-# --- FIREBASE INITIALIZATION (Raw String Version) ---
+# --- FIREBASE INITIALIZATION (Cloud-Safe Version) ---
 if not firebase_admin._apps:
     try:
+        # 1. Try to load from Streamlit Cloud Secrets (for your Dad's link)
         if "firebase_json" in st.secrets:
-            # This reads the entire JSON as one clean string
+            # We use the key name "firebase_json" which we will set in Step 2
             raw_json = st.secrets["firebase_json"]
             info = json.loads(raw_json)
             cred = credentials.Certificate(info)
+            
+        # 2. Try to load from local file (only works on your Laptop)
         else:
-            # Local laptop version
             current_dir = os.path.dirname(os.path.abspath(__file__))
             key_path = os.path.join(current_dir, "serviceAccountKey.json")
             cred = credentials.Certificate(key_path)
@@ -29,8 +31,11 @@ if not firebase_admin._apps:
         db = firestore.client()
         st.sidebar.success("☁️ Cloud Database Connected")
     except Exception as e:
+        # If both methods fail, show the error in the sidebar
         st.sidebar.error(f"⚠️ Connection Failed: {e}")
         db = None
+else:
+    db = firestore.client()
     
 # --- DATABASE LOGIC (Local SQLite) ---
 def init_db():
