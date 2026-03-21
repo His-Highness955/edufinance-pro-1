@@ -10,15 +10,15 @@ import os
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="EduFinance Premium", layout="wide", page_icon="🏦")
 
-# --- FIREBASE INITIALIZATION (Hybrid Cloud/Local Version) ---
+# --- FIREBASE INITIALIZATION ---
 if not firebase_admin._apps:
     try:
-        # 1. Check if running on Streamlit Cloud (using Secrets)
         if "firebase" in st.secrets:
-            firebase_details = dict(st.secrets["firebase"])
-            cred = credentials.Certificate(firebase_details)
-        # 2. Otherwise, look for the local file on your laptop
+            # This part handles the Streamlit Cloud Secrets
+            fb_dict = dict(st.secrets["firebase"])
+            cred = credentials.Certificate(fb_dict)
         else:
+            # This part handles your local laptop file
             current_dir = os.path.dirname(os.path.abspath(__file__))
             key_path = os.path.join(current_dir, "serviceAccountKey.json")
             cred = credentials.Certificate(key_path)
@@ -27,11 +27,11 @@ if not firebase_admin._apps:
         db = firestore.client()
         st.sidebar.success("☁️ Cloud Database Connected")
     except Exception as e:
-        st.sidebar.error(f"⚠️ Cloud Connection Failed: {e}")
+        st.sidebar.error(f"⚠️ Connection Failed: {e}")
         db = None
 else:
     db = firestore.client()
-
+    
 # --- DATABASE LOGIC (Local SQLite) ---
 def init_db():
     conn = sqlite3.connect('school_finance.db', check_same_thread=False)
