@@ -6,19 +6,21 @@ from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 import os
+import json
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="EduFinance Premium", layout="wide", page_icon="🏦")
 
-# --- FIREBASE INITIALIZATION ---
+# --- FIREBASE INITIALIZATION (Raw String Version) ---
 if not firebase_admin._apps:
     try:
-        if "firebase" in st.secrets:
-            # This part handles the Streamlit Cloud Secrets
-            fb_dict = dict(st.secrets["firebase"])
-            cred = credentials.Certificate(fb_dict)
+        if "firebase_json" in st.secrets:
+            # This reads the entire JSON as one clean string
+            raw_json = st.secrets["firebase_json"]
+            info = json.loads(raw_json)
+            cred = credentials.Certificate(info)
         else:
-            # This part handles your local laptop file
+            # Local laptop version
             current_dir = os.path.dirname(os.path.abspath(__file__))
             key_path = os.path.join(current_dir, "serviceAccountKey.json")
             cred = credentials.Certificate(key_path)
@@ -29,8 +31,6 @@ if not firebase_admin._apps:
     except Exception as e:
         st.sidebar.error(f"⚠️ Connection Failed: {e}")
         db = None
-else:
-    db = firestore.client()
     
 # --- DATABASE LOGIC (Local SQLite) ---
 def init_db():
