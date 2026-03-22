@@ -3,132 +3,144 @@ import pandas as pd
 from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
+import os
 import json
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="EduFinance Pro", layout="wide", page_icon="🏦")
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="EduFinance Premium", layout="wide", page_icon="🏦")
 
-# --- FIREBASE SETUP ---
+# --- FIREBASE INITIALIZATION ---
 if not firebase_admin._apps:
     try:
-        # This looks for the 'firebase_json' you will paste into Streamlit Secrets
         if "firebase_json" in st.secrets:
             info = json.loads(st.secrets["firebase_json"])
             cred = credentials.Certificate(info)
-            firebase_admin.initialize_app(cred)
-            db = firestore.client()
         else:
-            st.error("Missing Firebase Credentials in Secrets!")
-            db = None
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            key_path = os.path.join(current_dir, "serviceAccountKey.json")
+            cred = credentials.Certificate(key_path)
+            
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        st.sidebar.success("☁️ Cloud Database Connected")
     except Exception as e:
-        st.error(f"Cloud Connection Error: {e}")
+        st.sidebar.error(f"⚠️ Connection Failed: {e}")
         db = None
 else:
     db = firestore.client()
 
-# --- DATABASE HELPERS ---
-def get_data(collection):
+# --- CLOUD DATA ENGINE (Replaces SQLite) ---
+def get_cloud_data(collection):
+    """Fetches all documents from a Firebase collection."""
     if db is None: return pd.DataFrame()
-    docs = db.collection(collection).get()
-    data = [doc.to_dict() | {"id": doc.id} for doc in docs]
-    return pd.DataFrame(data)
+    try:
+        docs = db.collection(collection).get()
+        data = []
+        for doc in docs:
+            item = doc.to_dict()
+            item['id'] = doc.id
+            data.append(item)
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except:
+        return pd.DataFrame()
 
-def save_data(collection, data):
+def save_to_cloud(collection, data):
+    """Saves data directly to Google Cloud."""
     if db is not None:
         db.collection(collection).add(data)
         st.cache_data.clear()
         return True
     return False
 
-# --- UI STYLING ---
+# --- MODERN STYLING ---
 st.markdown("""
     <style>
-    .main { background: #f9f9f9; }
-    div[data-testid="stMetricValue"] { color: #1f77b4; font-weight: bold; }
-    .stButton>button { width: 100%; border-radius: 15px; background: #1f77b4; color: white; height: 3em; }
+    .main { background: #f0f2f6; }
+    div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #1f77b4; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 20px; background: #1f77b4; color: white; border: none; }
+    [data-testid="stSidebar"] { background-color: #0e1117; color: white; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- NAVIGATION ---
-st.sidebar.title("🏦 EduFinance Pro")
-menu = ["📊 Dashboard", "👤 Registry", "💸 Payments", "📜 Debt Ledger"]
-choice = st.sidebar.radio("Menu", menu)
+ALL_CLASSES = ["Kg 1", "Kg 1b", "Kg 2", "Nur 1", "Nur 2", "Pry 1", "Pry 2", "Pry 3", "Pry 4", "Pry 5", "JSS 1", "JSS 2", "JSS 3", "SSS 1", "SSS 2", "SSS 3"]
 
-ALL_CLASSES = ["Kg 1", "Kg 2", "Nur 1", "Nur 2", "Pry 1", "Pry 2", "Pry 3", "Pry 4", "Pry 5", "JSS 1", "JSS 2", "JSS 3", "SSS 1", "SSS 2", "SSS 3"]
+# --- SIDEBAR ---
+st.sidebar.title("EduFinance Pro")
+menu = ["📊 Dashboard", "👤 Registry", "💸 Payments", "📜 Debt Ledger"]
+choice = st.sidebar.radio("Main Menu", menu)
 
 # --- 1. DASHBOARD ---
 if choice == "📊 Dashboard":
-    st.title("Financial Overview")
-    s_df = get_data("students")
-    p_df = get_data("payments")
-    
+    st.title("🏦 Financial Dashboard")
+    s_df = get_cloud_data("students")
+    p_df = get_cloud_data("payments")
+
     if not s_df.empty:
         total_exp = s_df['total_fees'].sum()
         total_col = p_df['amount'].sum() if not p_df.empty else 0
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Expected Revenue", f"₦{total_exp:,.2f}")
-        c2.metric("Total Collected", f"₦{total_col:,.2f}")
-        c3.metric("Outstanding Debt", f"₦{(total_exp - total_col):,.2f}", delta_color="inverse")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Revenue Target", f"₦{total_exp:,.2f}")
+        m2.metric("Actual Income", f"₦{total_col:,.2f}")
+        m3.metric("Outstanding", f"₦{(total_exp - total_col):,.2f}", delta_color="inverse")
     else:
-        st.info("Start by registering students.")
+        st.info("No students found in the cloud.")
 
 # --- 2. REGISTRY ---
 elif choice == "👤 Registry":
-    st.subheader("Student Enrollment")
-    with st.form("reg", clear_on_submit=True):
-        name = st.text_input("Full Name")
-        s_class = st.selectbox("Class", ALL_CLASSES)
-        fees = st.number_input("Termly Fee (₦)", min_value=0.0)
-        if st.form_submit_button("Register Student"):
-            if name and save_data("students", {"name": name, "class": s_class, "total_fees": fees}):
-                st.success(f"{name} registered!")
-                st.rerun()
+    st.subheader("👥 Student Registry")
+    tab1, tab2 = st.tabs(["Add Student", "View All"])
+    
+    with tab1:
+        with st.form("reg", clear_on_submit=True):
+            name = st.text_input("Full Name")
+            s_class = st.selectbox("Class", ALL_CLASSES)
+            fees = st.number_input("Tuition (₦)", min_value=0.0)
+            if st.form_submit_button("Save to Cloud"):
+                if name:
+                    if save_to_cloud("students", {"name": name, "class": s_class, "total_fees": fees}):
+                        st.success(f"Registered {name}!")
+                        st.rerun()
+                else: st.error("Name required")
+
+    with tab2:
+        st.dataframe(get_cloud_data("students"), use_container_width=True)
 
 # --- 3. PAYMENTS ---
 elif choice == "💸 Payments":
-    st.subheader("Post a Payment")
-    s_df = get_data("students")
+    st.subheader("💰 Record Payment")
+    s_df = get_cloud_data("students")
     if not s_df.empty:
         selected = st.selectbox("Select Student", s_df['name'].tolist())
         sid = s_df[s_df['name'] == selected]['id'].values[0]
         amt = st.number_input("Amount (₦)", min_value=0.0)
         dt = st.date_input("Date", datetime.now())
         
-        if st.button("Submit Payment"):
-            p_data = {"sid": sid, "name": selected, "amount": amt, "date": str(dt), "time": datetime.now().strftime("%H:%M:%S")}
-            if save_data("payments", p_data):
+        if st.button("Confirm Payment"):
+            p_data = {"student_id": sid, "name": selected, "amount": amt, "date": str(dt)}
+            if save_to_cloud("payments", p_data):
                 st.balloons()
-                st.success("Payment Recorded!")
+                st.success("Payment Saved!")
                 st.rerun()
+    else: st.warning("Register students first.")
 
 # --- 4. DEBT LEDGER ---
 elif choice == "📜 Debt Ledger":
-    st.subheader("Collection Report")
-    s_df = get_data("students")
-    p_df = get_data("payments")
+    st.subheader("📜 Debt Report")
+    s_df = get_cloud_data("students")
+    p_df = get_cloud_data("payments")
 
     if not s_df.empty:
         report = []
         for _, s in s_df.iterrows():
-            # Filter payments for this specific student
-            student_payments = p_df[p_df['sid'] == s['id']] if not p_df.empty else pd.DataFrame()
-            paid = student_payments['amount'].sum() if not student_payments.empty else 0
-            
-            # Get the exact Date and Time of the last payment
-            last_pay = "No Record"
-            if not student_payments.empty:
-                last_row = student_payments.sort_values(by=['date', 'time']).iloc[-1]
-                last_pay = f"{last_row['date']} at {last_row['time']}"
-
+            paid = p_df[p_df['student_id'] == s['id']]['amount'].sum() if not p_df.empty else 0
+            last_date = p_df[p_df['student_id'] == s['id']]['date'].max() if not p_df.empty else "No Payments"
             report.append({
-                "Student Name": s['name'],
-                "Class": s['class'],
-                "Total Fee": s['total_fees'],
-                "Paid": paid,
+                "Student": s['name'], "Class": s['class'], 
+                "Fee": s['total_fees'], "Paid": paid, 
                 "Balance": s['total_fees'] - paid,
-                "Last Payment Info": last_pay
+                "Last Payment": last_date
             })
         
         final_df = pd.DataFrame(report)
-        st.table(final_df.style.format({"Total Fee": "₦{:,.2f}", "Paid": "₦{:,.2f}", "Balance": "₦{:,.2f}"}))
+        st.dataframe(final_df.style.format({"Fee": "₦{:,.2f}", "Paid": "₦{:,.2f}", "Balance": "₦{:,.2f}"}))
