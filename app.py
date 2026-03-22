@@ -114,12 +114,12 @@ if "Executive Dashboard" in choice:
     
     if not df_students.empty:
         total_expected = df_students['total_fees'].sum()
-        total_collected = df_payments['amount'].sum()
+        total_collected = df_payments['amount'].sum() if not df_payments.empty else 0
         total_debt = total_expected - total_collected
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Revenue Target", f"₦{total_expected:,.2f}")
-        m2.metric("Actual Income", f"₦{total_collected:,.2f}", f"{(total_collected/total_expected*100):.1f}%")
+        m2.metric("Actual Income", f"₦{total_collected:,.2f}", f"{(total_collected/total_expected*100):.1f}%" if total_expected > 0 else "0%")
         m3.metric("Outstanding", f"₦{total_debt:,.2f}", delta_color="inverse")
         m4.metric("Student Count", len(df_students))
 
@@ -195,19 +195,25 @@ elif "Post Payment" in choice:
         student_dict = dict(zip(df_students['display'], df_students['id']))
         selected = st.selectbox("Select Student", df_students['display'])
         amount = st.number_input("Amount Received (₦)", min_value=0.0)
+        
+        # Enhanced date and time recording
         date = st.date_input("Transaction Date", datetime.now())
+        time_now = datetime.now().strftime("%H:%M:%S")
+        full_timestamp = f"{date} {time_now}"
         
         if st.button("Confirm Payment"):
-            save_data("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", (student_dict[selected], amount, str(date)))
+            save_data("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", (student_dict[selected], amount, full_timestamp))
             st.cache_data.clear() 
             st.balloons()
-            st.success(f"Payment recorded for {selected}")
+            st.success(f"Payment of ₦{amount:,.2f} recorded for {selected} at {time_now}")
     else:
         st.warning("No students found. Please register a student first.")
 
 # --- DEBT LEDGER ---
 elif "Debt Ledger" in choice:
     st.subheader("📜 Debt Collection & Reports")
+    
+    # Ledger Table (Summary)
     query = """
     SELECT s.name as 'Student Name', s.class as 'Class', s.total_fees as 'Total Fee', 
            SUM(IFNULL(p.amount, 0)) as 'Total Paid'
@@ -217,8 +223,32 @@ elif "Debt Ledger" in choice:
     """
     df_debt = run_query(query)
     df_debt['Balance Owed'] = df_debt['Total Fee'] - df_debt['Total Paid']
+    
     if st.checkbox("Show Only Debtors", value=True):
         df_debt = df_debt[df_debt['Balance Owed'] > 0]
     
+    st.markdown("### 📊 Balances Overview")
     st.dataframe(df_debt.style.format({"Total Fee": "₦{:,.2f}", "Total Paid": "₦{:,.2f}", "Balance Owed": "₦{:,.2f}"}), use_container_width=True)
-    st.download_button("📥 Download Debt Report (CSV)", df_debt.to_csv(index=False).encode('utf-8'), "debt_report.csv", "text/csv")
+    
+    st.markdown("---")
+    
+    # Detailed Transaction Table (New Feature)
+    st.markdown("### 🕒 Detailed Payment History")
+    st.write("This table tracks every payment entry individually with date and time.")
+    
+    history_query = """
+    SELECT s.name as 'Student Name', s.class as 'Class', p.amount as 'Amount Paid', p.date as 'Payment Date/Time'
+    FROM payments p
+    JOIN students s ON p.student_id = s.id
+    ORDER BY p.id DESC
+    """
+    df_history = run_query(history_query)
+    
+    if not df_history.empty:
+        st.dataframe(df_history.style.format({"Amount Paid": "₦{:,.2f}"}), use_container_width=True)
+        
+        # Download Combined Report
+        csv = df_history.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Full Transaction History (CSV)", csv, "payment_history.csv", "text/csv")
+    else:
+        st.info("No payment transactions found yet.")
