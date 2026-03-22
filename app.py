@@ -15,210 +15,152 @@ st.set_page_config(page_title="EduFinance Premium", layout="wide", page_icon="�
 if not firebase_admin._apps:
     try:
         if "firebase_json" in st.secrets:
-            raw_json = st.secrets["firebase_json"]
-            info = json.loads(raw_json)
+            info = json.loads(st.secrets["firebase_json"])
             cred = credentials.Certificate(info)
         else:
             current_dir = os.path.dirname(os.path.abspath(__file__))
             key_path = os.path.join(current_dir, "serviceAccountKey.json")
             cred = credentials.Certificate(key_path)
-            
         firebase_admin.initialize_app(cred)
         db = firestore.client()
-        st.sidebar.success("☁️ Cloud Database Connected")
+        st.sidebar.success("☁️ Cloud Connected")
     except Exception as e:
-        st.sidebar.error(f"⚠️ Connection Failed: {e}")
+        st.sidebar.error("⚠️ Cloud Offline")
         db = None
 else:
     db = firestore.client()
 
-# --- DATABASE LOGIC (Thread-Safe Architecture) ---
+# --- DATABASE LOGIC (Optimized for Speed) ---
 @st.cache_resource
 def init_db():
-    """Initializes the database connection for reading."""
     conn = sqlite3.connect('school_finance.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS students 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, class TEXT, total_fees REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS payments 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER, amount REAL, date TEXT, 
-                  FOREIGN KEY(student_id) REFERENCES students(id))''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER, amount REAL, date TEXT)''')
     conn.commit()
     return conn
 
 def save_data(query, params=()):
-    """Handles all INSERT/UPDATE/DELETE operations using a fresh connection to avoid locks."""
     with sqlite3.connect('school_finance.db') as temp_conn:
-        cursor = temp_conn.cursor()
-        cursor.execute(query, params)
+        temp_conn.execute(query, params)
         temp_conn.commit()
+    st.cache_data.clear() # Clears read cache so UI updates immediately
 
 conn = init_db()
 
-@st.cache_data
+@st.cache_data(ttl=600) # Cache data for 10 minutes unless cleared
 def run_query(query):
-    """Fast reading for the dashboard and lists."""
     return pd.read_sql(query, conn)
 
-# --- CLOUD SYNC & DELETE LOGIC ---
+# --- CLOUD SYNC ---
 def sync_to_firebase(table_name):
-    if db is None:
-        st.error("Firebase connection is not active.")
-        return
+    if db is None: return
     df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
-    with st.spinner(f"Syncing {table_name}..."):
-        for index, row in df.iterrows():
-            db.collection(table_name).document(str(row['id'])).set(row.to_dict())
-    st.success(f"✅ {table_name.capitalize()} synced!")
+    for _, row in df.iterrows():
+        db.collection(table_name).document(str(row['id'])).set(row.to_dict())
+    st.success(f"✅ {table_name} Synced")
 
-def cloud_delete(table_name, doc_id):
-    """Removes records from Google Cloud immediately."""
-    if db is not None:
-        try:
-            db.collection(table_name).document(str(doc_id)).delete()
-        except: pass
-
-# --- HIGH-END MODERN STYLING (Glassmorphism) ---
+# --- STYLING ---
 st.markdown("""
     <style>
     .main { background: #f0f2f6; }
     div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #1f77b4; font-weight: bold; }
-    .stButton>button { width: 100%; border-radius: 20px; border: none; background: #1f77b4; color: white; transition: 0.3s; }
-    .stButton>button:hover { background: #145a8d; transform: scale(1.02); }
+    .stButton>button { width: 100%; border-radius: 12px; background: #1f77b4; color: white; }
     [data-testid="stSidebar"] { background-color: #0e1117; color: white; }
-    .css-1r6slb0 { border-radius: 15px; border: 1px solid #ddd; padding: 15px; background: white; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- GLOBAL SETTINGS ---
 ALL_CLASSES = ["Kg 1", "Kg 1b", "Kg 2", "Nur 1", "Nur 2", "Pry 1", "Pry 2", "Pry 3", "Pry 4", "Pry 5", "JSS 1", "JSS 2", "JSS 3", "SSS 1", "SSS 2", "SSS 3"]
 
-# --- SIDEBAR NAVIGATION ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2830/2830284.png", width=100)
+# --- SIDEBAR ---
 st.sidebar.title("EduFinance Pro")
-
-st.sidebar.markdown("### ☁️ Backup Tools")
-if st.sidebar.button("Push Data to Google Cloud"):
+if st.sidebar.button("Push to Cloud"):
     sync_to_firebase("students")
     sync_to_firebase("payments")
 
-st.sidebar.markdown("---")
 menu = ["📊 Executive Dashboard", "👤 Student Registry", "💸 Post Payment", "📜 Debt Ledger"]
 choice = st.sidebar.radio("Main Menu", menu)
 
-# --- DASHBOARD VIEW ---
-if "Executive Dashboard" in choice:
-    st.title("🏦 Financial Intelligence Dashboard")
-    df_students = run_query("SELECT * FROM students")
-    df_payments = run_query("SELECT * FROM payments")
+# --- DASHBOARD ---
+if choice == "📊 Executive Dashboard":
+    st.title("🏦 Financial Summary")
+    df_s = run_query("SELECT total_fees FROM students")
+    df_p = run_query("SELECT amount FROM payments")
     
-    if not df_students.empty:
-        total_expected = df_students['total_fees'].sum()
-        total_collected = df_payments['amount'].sum()
-        total_debt = total_expected - total_collected
+    if not df_s.empty:
+        target = df_s['total_fees'].sum()
+        actual = df_p['amount'].sum() if not df_p.empty else 0
+        debt = target - actual
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Revenue Target", f"₦{total_expected:,.2f}")
-        m2.metric("Actual Income", f"₦{total_collected:,.2f}", f"{(total_collected/total_expected*100):.1f}%")
-        m3.metric("Outstanding", f"₦{total_debt:,.2f}", delta_color="inverse")
-        m4.metric("Student Count", len(df_students))
-
-        st.markdown("---")
-        col_left, col_right = st.columns([2, 1])
-
-        with col_left:
-            if not df_payments.empty:
-                df_payments['date'] = pd.to_datetime(df_payments['date'])
-                trend = df_payments.groupby('date')['amount'].sum().reset_index()
-                st.plotly_chart(px.line(trend, x='date', y='amount', title="Income Flow Over Time"), use_container_width=True)
-
-        with col_right:
-            st.plotly_chart(px.pie(names=['Collected', 'Pending'], values=[total_collected, total_debt], 
-                             color_discrete_sequence=['#2ecc71', '#e74c3c'], hole=0.4), use_container_width=True)
+        m1.metric("Target", f"₦{target:,.0f}")
+        m2.metric("Income", f"₦{actual:,.0f}", f"{(actual/target*100):.1f}%")
+        m3.metric("Debt", f"₦{debt:,.0f}", delta_color="inverse")
+        m4.metric("Students", len(df_s))
     else:
-        st.info("Welcome! Please register students in the 'Student Registry' to begin tracking finances.")
+        st.info("No data yet.")
 
-# --- STUDENT REGISTRY ---
-elif "Student Registry" in choice:
-    st.subheader("👥 Student Records Management")
-    tab1, tab2, tab3 = st.tabs(["Add New Student", "View/Manage Students", "🛠️ Admin Tools"])
+# --- STUDENT REGISTRY (Using Fragment for Speed) ---
+elif choice == "👤 Student Registry":
+    st.subheader("👥 Student Records")
     
-    with tab1:
+    @st.fragment
+    def registration_form():
         with st.form("reg_form", clear_on_submit=True):
-            name = st.text_input("Student Full Name")
-            s_class = st.selectbox("Assign Class", ALL_CLASSES)
-            fees = st.number_input("Termly Tuition Fee (₦)", min_value=0.0, step=500.0)
-            if st.form_submit_button("Complete Registration"):
+            name = st.text_input("Full Name")
+            s_class = st.selectbox("Class", ALL_CLASSES)
+            fees = st.number_input("Tuition (₦)", min_value=0.0, step=1000.0)
+            if st.form_submit_button("Register"):
                 if name:
                     save_data("INSERT INTO students (name, class, total_fees) VALUES (?, ?, ?)", (name, s_class, fees))
-                    st.cache_data.clear() 
-                    st.success(f"Successfully added {name} to {s_class}")
-                else:
-                    st.error("Name is required.")
-
-    with tab2:
-        st.dataframe(run_query("SELECT * FROM students"), use_container_width=True)
-        if st.button("Refresh List"): st.rerun()
-
-    with tab3:
-        st.warning("⚠️ High Privilege Actions: Requires Master Code")
-        m_code = st.text_input("Enter Master Deletion Code", type="password")
-        if m_code == "BOUESTI2026":
-            del_mode = st.radio("Delete Selection", ["Single Student Record", "Wipe All Local Data"])
-            
-            if del_mode == "Single Student Record":
-                df_del = run_query("SELECT id, name, class FROM students")
-                if not df_del.empty:
-                    df_del['display'] = df_del['name'] + " (" + df_del['class'] + ")"
-                    target = st.selectbox("Select Student to Delete", df_del['display'])
-                    if st.button("Confirm Delete from App & Cloud"):
-                        sid = df_del[df_del['display'] == target]['id'].values[0]
-                        save_data("DELETE FROM payments WHERE student_id = ?", (int(sid),))
-                        save_data("DELETE FROM students WHERE id = ?", (int(sid),))
-                        cloud_delete("students", sid)
-                        st.cache_data.clear()
-                        st.success(f"Successfully removed {target}")
-            
-            elif del_mode == "Wipe All Local Data":
-                if st.button("🚨 WIPE ALL LOCAL DATA"):
-                    save_data("DELETE FROM students")
-                    save_data("DELETE FROM payments")
-                    st.cache_data.clear()
-                    st.success("Local database cleared.")
+                    st.success(f"Added {name}")
+                else: st.error("Name required")
+    
+    tab1, tab2 = st.tabs(["Add Student", "View List"])
+    with tab1: registration_form()
+    with tab2: st.dataframe(run_query("SELECT * FROM students"), use_container_width=True)
 
 # --- POST PAYMENT ---
-elif "Post Payment" in choice:
-    st.subheader("💰 Payment Processing")
-    df_students = run_query("SELECT id, name, class FROM students")
-    if not df_students.empty:
-        df_students['display'] = df_students['name'] + " (" + df_students['class'] + ")"
-        student_dict = dict(zip(df_students['display'], df_students['id']))
-        selected = st.selectbox("Select Student", df_students['display'])
-        amount = st.number_input("Amount Received (₦)", min_value=0.0)
-        date = st.date_input("Transaction Date", datetime.now())
+elif choice == "💸 Post Payment":
+    st.subheader("💰 Record Payment")
+    df_s = run_query("SELECT id, name, class FROM students")
+    
+    @st.fragment
+    def payment_form(df):
+        df['display'] = df['name'] + " (" + df['class'] + ")"
+        lookup = dict(zip(df['display'], df['id']))
+        selected = st.selectbox("Student", df['display'])
+        amt = st.number_input("Amount (₦)", min_value=0.0)
+        dt = st.date_input("Date", datetime.now())
         
         if st.button("Confirm Payment"):
-            save_data("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", (student_dict[selected], amount, str(date)))
-            st.cache_data.clear() 
+            save_data("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", (lookup[selected], amt, str(dt)))
             st.balloons()
-            st.success(f"Payment recorded for {selected}")
-    else:
-        st.warning("No students found. Please register a student first.")
+            st.success("Payment Recorded")
+            
+    if not df_s.empty: payment_form(df_s)
+    else: st.warning("Register students first.")
 
 # --- DEBT LEDGER ---
-elif "Debt Ledger" in choice:
-    st.subheader("📜 Debt Collection & Reports")
+elif choice == "📜 Debt Ledger":
+    st.subheader("📑 Debt & Payment History")
+    
+    # Speed-optimized SQL Join
     query = """
-    SELECT s.name as 'Student Name', s.class as 'Class', s.total_fees as 'Total Fee', 
-           SUM(IFNULL(p.amount, 0)) as 'Total Paid'
+    SELECT s.name as 'Student', s.class as 'Class', s.total_fees as 'Fee', 
+           SUM(IFNULL(p.amount, 0)) as 'Paid',
+           (s.total_fees - SUM(IFNULL(p.amount, 0))) as 'Balance',
+           MAX(p.date) as 'Last Payment'
     FROM students s
     LEFT JOIN payments p ON s.id = p.student_id
     GROUP BY s.id
     """
     df_debt = run_query(query)
-    df_debt['Balance Owed'] = df_debt['Total Fee'] - df_debt['Total Paid']
-    if st.checkbox("Show Only Debtors", value=True):
-        df_debt = df_debt[df_debt['Balance Owed'] > 0]
     
-    st.dataframe(df_debt.style.format({"Total Fee": "₦{:,.2f}", "Total Paid": "₦{:,.2f}", "Balance Owed": "₦{:,.2f}"}), use_container_width=True)
-    st.download_button("📥 Download Debt Report (CSV)", df_debt.to_csv(index=False).encode('utf-8'), "debt_report.csv", "text/csv")
+    if st.checkbox("Show Only Debtors", value=True):
+        df_debt = df_debt[df_debt['Balance'] > 0]
+    
+    st.dataframe(df_debt.style.format({"Fee": "₦{:,.2f}", "Paid": "₦{:,.2f}", "Balance": "₦{:,.2f}"}), use_container_width=True)
+    st.download_button("📥 Download CSV", df_debt.to_csv(index=False), "debt_report.csv")
