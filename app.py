@@ -158,9 +158,12 @@ elif "Student Registry" in choice:
             fees = st.number_input("Termly Tuition Fee (₦)", min_value=0.0, step=500.0)
             if st.form_submit_button("Complete Registration"):
                 if name:
-                    conn.execute("INSERT INTO students (name, class, total_fees) VALUES (?, ?, ?)", (name, s_class, fees))
+                    # FIX: Create a fresh cursor for the write operation
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO students (name, class, total_fees) VALUES (?, ?, ?)", (name, s_class, fees))
                     conn.commit()
-                    st.cache_data.clear() 
+                    
+                    st.cache_data.clear() # Clear cache so the list updates
                     st.success(f"Successfully added {name} to {s_class}")
                 else:
                     st.error("Name is required.")
@@ -217,10 +220,13 @@ elif "Post Payment" in choice:
         date = st.date_input("Transaction Date", datetime.now())
         
         if st.button("Confirm Payment"):
-            conn.execute("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", 
+            # FIX: Create a fresh cursor for the write operation
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", 
                          (student_dict[selected], amount, str(date)))
             conn.commit()
-            st.cache_data.clear() 
+            
+            st.cache_data.clear() # Clear cache for dashboard updates
             st.balloons()
             st.success(f"Payment of ₦{amount:,.2f} recorded for {selected}")
     else:
