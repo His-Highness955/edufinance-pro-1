@@ -2,4 +2,4 @@ streamlit
 pandas
 plotly
 firebase-admin
-matplotlib
+google-cloud-firestore
