@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd  # Fixed: Changed 'import pd' to 'import pandas as pd'
 import sqlite3
 import plotly.express as px
 from datetime import datetime
@@ -99,7 +99,7 @@ st.sidebar.markdown("---")
 menu = ["📊 Executive Dashboard", "👤 Student Registry", "💸 Post Payment", "📜 Debt Ledger"]
 choice = st.sidebar.radio("Main Menu", menu)
 
-# --- DASHBOARD VIEW (CHARTS REMOVED) ---
+# --- DASHBOARD VIEW ---
 if "Executive Dashboard" in choice:
     st.title("🏦 Financial Intelligence Dashboard")
     df_students = run_query("SELECT * FROM students")
