@@ -34,7 +34,7 @@ if not firebase_admin._apps:
 else:
     db = firestore.client()
 
-# --- DATABASE LOGIC (Cached Connection) ---
+# --- DATABASE LOGIC (Cached Connection for Speed) ---
 @st.cache_resource
 def init_db():
     conn = sqlite3.connect('school_finance.db', check_same_thread=False)
@@ -54,21 +54,27 @@ conn = init_db()
 def run_query(query):
     return pd.read_sql(query, conn)
 
-# --- CLOUD SYNC LOGIC ---
+# --- CLOUD SYNC & DELETE LOGIC ---
 def sync_to_firebase(table_name):
     if db is None:
         st.error("Cannot sync: Firebase connection is not active.")
         return
-    
     df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
     if df.empty:
         st.warning(f"No records in {table_name} to sync.")
         return
-
     with st.spinner(f"Syncing {len(df)} {table_name} records to Google Cloud..."):
         for index, row in df.iterrows():
             db.collection(table_name).document(str(row['id'])).set(row.to_dict())
     st.success(f"✅ {table_name.capitalize()} synced successfully!")
+
+def cloud_delete(table_name, doc_id):
+    """Deletes the specific record from Firebase Cloud"""
+    if db is not None:
+        try:
+            db.collection(table_name).document(str(doc_id)).delete()
+        except Exception:
+            pass
 
 # --- HIGH-END MODERN STYLING (Glassmorphism) ---
 st.markdown("""
@@ -93,6 +99,8 @@ ALL_CLASSES = [
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2830/2830284.png", width=100)
 st.sidebar.title("EduFinance Pro")
 
+# Cloud Sync Section
+st.sidebar.markdown("### ☁️ Backup Tools")
 if st.sidebar.button("Push Data to Google Cloud"):
     sync_to_firebase("students")
     sync_to_firebase("payments")
@@ -141,7 +149,7 @@ if "Executive Dashboard" in choice:
 # --- STUDENT REGISTRY ---
 elif "Student Registry" in choice:
     st.subheader("👥 Student Records Management")
-    tab1, tab2 = st.tabs(["Add New Student", "View/Manage Students"])
+    tab1, tab2, tab3 = st.tabs(["Add New Student", "View/Manage Students", "🛠️ Admin Tools"])
     
     with tab1:
         with st.form("reg_form", clear_on_submit=True):
@@ -152,7 +160,7 @@ elif "Student Registry" in choice:
                 if name:
                     conn.execute("INSERT INTO students (name, class, total_fees) VALUES (?, ?, ?)", (name, s_class, fees))
                     conn.commit()
-                    st.cache_data.clear() # Clear cache to refresh the table
+                    st.cache_data.clear() 
                     st.success(f"Successfully added {name} to {s_class}")
                 else:
                     st.error("Name is required.")
@@ -162,6 +170,39 @@ elif "Student Registry" in choice:
         st.dataframe(df_view, use_container_width=True)
         if st.button("Refresh List"):
             st.rerun()
+
+    with tab3:
+        st.warning("⚠️ High Privilege Actions: Requires Master Code")
+        m_code = st.text_input("Enter Master Deletion Code", type="password")
+        if m_code == "BOUESTI2026":
+            del_mode = st.radio("Delete Selection", ["Single Student Record", "Wipe All Local Data"])
+            
+            if del_mode == "Single Student Record":
+                df_del = run_query("SELECT id, name, class FROM students")
+                if not df_del.empty:
+                    df_del['display'] = df_del['name'] + " (" + df_del['class'] + ")"
+                    to_delete = st.selectbox("Select Student to Delete", df_del['display'])
+                    if st.button("Confirm Delete from App & Cloud"):
+                        sid = df_del[df_del['display'] == to_delete]['id'].values[0]
+                        # Delete locally
+                        conn.execute("DELETE FROM payments WHERE student_id = ?", (int(sid),))
+                        conn.execute("DELETE FROM students WHERE id = ?", (int(sid),))
+                        conn.commit()
+                        # Delete from Cloud
+                        cloud_delete("students", sid)
+                        st.cache_data.clear()
+                        st.success(f"Successfully removed {to_delete}")
+                else:
+                    st.info("No students to delete.")
+            
+            elif del_mode == "Wipe All Local Data":
+                st.error("This will clear your local database. It will NOT wipe the cloud unless you manually delete there.")
+                if st.button("🚨 WIPE ALL LOCAL DATA"):
+                    conn.execute("DELETE FROM students")
+                    conn.execute("DELETE FROM payments")
+                    conn.commit()
+                    st.cache_data.clear()
+                    st.success("Local database cleared.")
 
 # --- POST PAYMENT ---
 elif "Post Payment" in choice:
@@ -179,7 +220,7 @@ elif "Post Payment" in choice:
             conn.execute("INSERT INTO payments (student_id, amount, date) VALUES (?, ?, ?)", 
                          (student_dict[selected], amount, str(date)))
             conn.commit()
-            st.cache_data.clear() # Clear cache for dashboard updates
+            st.cache_data.clear() 
             st.balloons()
             st.success(f"Payment of ₦{amount:,.2f} recorded for {selected}")
     else:
