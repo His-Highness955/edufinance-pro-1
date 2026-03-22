@@ -13,60 +13,60 @@ st.set_page_config(page_title="EduFinance Premium", layout="wide", page_icon="�
 # --- FIREBASE CLOUD INITIALIZATION ---
 if not firebase_admin._apps:
     try:
+        # Priority 1: Streamlit Cloud Secrets
         if "firebase_json" in st.secrets:
-            # For Streamlit Cloud Deployment
-            raw_json = st.secrets["firebase_json"]
-            info = json.loads(raw_json)
+            info = json.loads(st.secrets["firebase_json"])
             cred = credentials.Certificate(info)
+        # Priority 2: Local JSON file for testing
         else:
-            # For Local Testing (Make sure your JSON file is in the folder)
             current_dir = os.path.dirname(os.path.abspath(__file__))
             key_path = os.path.join(current_dir, "serviceAccountKey.json")
             cred = credentials.Certificate(key_path)
             
         firebase_admin.initialize_app(cred)
         db = firestore.client()
-        st.sidebar.success("☁️ Connected to Google Cloud")
+        st.sidebar.success("☁️ Google Cloud Active")
     except Exception as e:
-        st.sidebar.error(f"⚠️ Cloud Connection Failed: {e}")
+        st.sidebar.error("⚠️ Connection Offline")
         db = None
 else:
     db = firestore.client()
 
-# --- CLOUD DATA ENGINE ---
+# --- STABILIZED CLOUD ENGINE ---
 def get_all_data(collection_name):
-    """Fetches real-time data from Google Cloud Firestore."""
+    """Fetches data using .get() instead of .stream() to prevent gRPC hangs."""
     if db is None: return pd.DataFrame()
-    docs = db.collection(collection_name).stream()
-    data = []
-    for doc in docs:
-        item = doc.to_dict()
-        item['id'] = doc.id  # Keep track of the document ID for deletions
-        data.append(item)
-    return pd.DataFrame(data)
+    try:
+        # We fetch the snapshot once to avoid the 'iterator' error you saw
+        docs = db.collection(collection_name).get(timeout=10)
+        data = []
+        for doc in docs:
+            item = doc.to_dict()
+            item['id'] = doc.id
+            data.append(item)
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.sidebar.warning(f"📡 Sync Delay: {e}")
+        return pd.DataFrame()
 
 def save_to_cloud(collection_name, data):
-    """Saves a new record directly to the Cloud."""
+    """Saves data and clears cache to force an immediate update."""
     if db is not None:
-        db.collection(collection_name).add(data)
-        st.cache_data.clear()
-        return True
-    return False
-
-def delete_from_cloud(collection_name, doc_id):
-    """Permanently removes a record from the Cloud."""
-    if db is not None:
-        db.collection(collection_name).document(doc_id).delete()
-        st.cache_data.clear()
-        return True
+        try:
+            db.collection(collection_name).add(data)
+            st.cache_data.clear()
+            return True
+        except Exception as e:
+            st.error(f"Save Failed: {e}")
     return False
 
 # --- MODERN STYLING ---
 st.markdown("""
     <style>
     .main { background: #f8f9fa; }
-    div[data-testid="stMetricValue"] { font-size: 2rem; color: #1f77b4; font-weight: bold; }
-    .stButton>button { width: 100%; border-radius: 12px; height: 3em; background: #1f77b4; color: white; }
+    div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #1f77b4; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 12px; height: 3em; background: #1f77b4; color: white; border: none; }
+    .stButton>button:hover { background: #145a8d; }
     [data-testid="stSidebar"] { background-color: #0e1117; }
     </style>
     """, unsafe_allow_html=True)
@@ -81,27 +81,25 @@ choice = st.sidebar.radio("Main Menu", menu)
 # --- 1. EXECUTIVE DASHBOARD ---
 if choice == "📊 Executive Dashboard":
     st.title("🏦 Financial Intelligence")
-    students_df = get_all_data("students")
-    payments_df = get_all_data("payments")
+    s_df = get_all_data("students")
+    p_df = get_all_data("payments")
 
-    if not students_df.empty:
-        total_expected = students_df['total_fees'].sum()
-        total_collected = payments_df['amount'].sum() if not payments_df.empty else 0
+    if not s_df.empty:
+        total_expected = s_df['total_fees'].sum()
+        total_collected = p_df['amount'].sum() if not p_df.empty else 0
         total_debt = total_expected - total_collected
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Revenue Target", f"₦{total_expected:,.2f}")
         m2.metric("Actual Income", f"₦{total_collected:,.2f}")
         m3.metric("Outstanding", f"₦{total_debt:,.2f}", delta_color="inverse")
-        
-        st.info("Cloud Sync Active: Metrics reflect all devices.")
     else:
-        st.info("Welcome. Start by registering students in the Registry.")
+        st.info("No records found in the Cloud. Please go to the Registry to add students.")
 
 # --- 2. STUDENT REGISTRY ---
 elif choice == "👤 Student Registry":
     st.subheader("👥 Student Records")
-    tab1, tab2, tab3 = st.tabs(["Add New Student", "View All Students", "🛠️ Admin Tools"])
+    tab1, tab2 = st.tabs(["Add New Student", "View All Students"])
 
     with tab1:
         with st.form("reg_form", clear_on_submit=True):
@@ -110,56 +108,37 @@ elif choice == "👤 Student Registry":
             fees = st.number_input("Termly Tuition (₦)", min_value=0.0, step=500.0)
             if st.form_submit_button("Register to Cloud"):
                 if name:
-                    new_student = {"name": name, "class": s_class, "total_fees": fees}
-                    if save_to_cloud("students", new_student):
-                        st.success(f"Registered {name} successfully!")
+                    if save_to_cloud("students", {"name": name, "class": s_class, "total_fees": fees}):
+                        st.success(f"Registered {name}!")
+                        st.rerun()
                 else: st.error("Name is required.")
 
     with tab2:
-        st.dataframe(get_all_data("students"), use_container_width=True)
-
-    with tab3:
-        st.warning("Admin Access Required")
-        code = st.text_input("Master Code", type="password")
-        if code == "BOUESTI2026":
-            st.write("Select a student to remove from Cloud database:")
-            df_del = get_all_data("students")
-            if not df_del.empty:
-                target_name = st.selectbox("Select Student", df_del['name'])
-                target_id = df_del[df_del['name'] == target_name]['id'].values[0]
-                if st.button("🚨 PERMANENT DELETE"):
-                    if delete_from_cloud("students", target_id):
-                        st.success("Record Deleted.")
-                        st.rerun()
+        view_df = get_all_data("students")
+        if not view_df.empty:
+            st.dataframe(view_df[['name', 'class', 'total_fees']], use_container_width=True)
+        else: st.write("No students registered.")
 
 # --- 3. POST PAYMENT ---
 elif choice == "💸 Post Payment":
     st.subheader("💰 Record Payment")
-    students_df = get_all_data("students")
+    s_df = get_all_data("students")
     
-    if not students_df.empty:
-        # Create list for dropdown
-        names = students_df['name'].tolist()
+    if not s_df.empty:
+        names = s_df['name'].tolist()
         selected_student = st.selectbox("Select Student", names)
-        
-        # Get the ID of selected student for mapping
-        sid = students_df[students_df['name'] == selected_student]['id'].values[0]
+        sid = s_df[s_df['name'] == selected_student]['id'].values[0]
         
         amount = st.number_input("Amount Paid (₦)", min_value=0.0)
         p_date = st.date_input("Date", datetime.now())
 
         if st.button("Confirm Payment"):
-            payment_data = {
-                "student_name": selected_student,
-                "student_id": sid,
-                "amount": amount,
-                "date": str(p_date)
-            }
-            if save_to_cloud("payments", payment_data):
+            p_data = {"student_name": selected_student, "student_id": sid, "amount": amount, "date": str(p_date)}
+            if save_to_cloud("payments", p_data):
                 st.balloons()
-                st.success("Payment saved to Cloud!")
-    else:
-        st.warning("Register students before posting payments.")
+                st.success("Payment Saved!")
+                st.rerun()
+    else: st.warning("Register students first.")
 
 # --- 4. DEBT LEDGER ---
 elif choice == "📜 Debt Ledger":
@@ -168,26 +147,15 @@ elif choice == "📜 Debt Ledger":
     p_df = get_all_data("payments")
 
     if not s_df.empty:
-        # Calculate totals per student
         report = []
         for _, s in s_df.iterrows():
-            # Filter payments for this student
-            total_paid = 0
-            if not p_df.empty:
-                total_paid = p_df[p_df['student_id'] == s['id']]['amount'].sum()
-            
-            balance = s['total_fees'] - total_paid
-            report.append({
-                "Student": s['name'],
-                "Class": s['class'],
-                "Total Fee": s['total_fees'],
-                "Paid": total_paid,
-                "Balance": balance
-            })
+            paid = p_df[p_df['student_id'] == s['id']]['amount'].sum() if not p_df.empty else 0
+            balance = s['total_fees'] - paid
+            report.append({"Student": s['name'], "Class": s['class'], "Fee": s['total_fees'], "Paid": paid, "Balance": balance})
         
-        final_report = pd.DataFrame(report)
+        final_df = pd.DataFrame(report)
         if st.checkbox("Show Only Debtors", value=True):
-            final_report = final_report[final_report['Balance'] > 0]
+            final_df = final_df[final_df['Balance'] > 0]
         
-        st.table(final_report)
-        st.download_button("📥 Download Report", final_report.to_csv(index=False), "debtors.csv")
+        st.table(final_df.style.format({"Fee": "₦{:,.2f}", "Paid": "₦{:,.2f}", "Balance": "₦{:,.2f}"}))
+        st.download_button("📥 Download Report", final_df.to_csv(index=False), "debtors.csv")
